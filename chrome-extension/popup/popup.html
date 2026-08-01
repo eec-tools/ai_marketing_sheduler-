@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Marketing Scheduler Companion</title>
+  <style>
+    :root {
+      --primary: #2563EB;
+      --primary-hover: #1D4ED8;
+      --bg: #0F172A;
+      --card: #1E293B;
+      --text: #F8FAFC;
+      --text-muted: #94A3B8;
+      --success: #10B981;
+      --warning: #F59E0B;
+    }
+    body {
+      width: 320px;
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .title {
+      font-size: 15px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 12px;
+      background-color: rgba(16, 185, 129, 0.15);
+      color: var(--success);
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: var(--success);
+    }
+    .card {
+      background-color: var(--card);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .card-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .stats-val {
+      font-size: 24px;
+      font-weight: 800;
+      color: #38BDF8;
+    }
+    .info-text {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.4;
+      margin: 0;
+    }
+    .btn {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .btn-primary {
+      background-color: var(--primary);
+      color: white;
+    }
+    .btn-primary:hover {
+      background-color: var(--primary-hover);
+    }
+    .btn-secondary {
+      background-color: rgba(255, 255, 255, 0.08);
+      color: var(--text);
+    }
+    .btn-secondary:hover {
+      background-color: rgba(255, 255, 255, 0.14);
+    }
+    .footer {
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">✨ AI Companion</div>
+    <div class="status-badge" id="statusBadge">
+      <span class="status-dot"></span> Active
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Pending Jobs</div>
+    <div class="stats-val" id="pendingCount">0</div>
+  </div>
+
+  <div class="card">
+    <p class="info-text">
+      Keep a logged-in tab open to <b>chatgpt.com</b>. Whenever your AI Marketing Scheduler dashboard requests a ChatGPT / DALL-E image, this companion will automatically draw it in your browser and sync it back.
+    </p>
+  </div>
+
+  <button class="btn btn-primary" id="pollBtn">
+    🔄 Check Pending Jobs Now
+  </button>
+  
+  <button class="btn btn-secondary" id="testBtn">
+    🧪 Test ChatGPT Generation
+  </button>
+
+  <div class="footer">
+    Backend: <span id="backendUrlDisplay">localhost:8000</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
