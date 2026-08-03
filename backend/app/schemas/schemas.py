@@ -238,6 +238,7 @@ class GeneratedPostOut(BaseModel):
     cta: Optional[str]
     image_requirements: Optional[str]
     image_url: Optional[str]
+    media_url: Optional[str]
     image_review_result: Optional[str]
     image_review_notes: Optional[str]
     image_retry_count: int
@@ -261,6 +262,7 @@ class HistoryOut(BaseModel):
     generation_time_ms: Optional[int]
     caption_preview: Optional[str]
     image_url: Optional[str]
+    media_url: Optional[str]
     created_at: datetime
 
     class Config:

@@ -21,10 +21,10 @@ const STAGE_LABELS: Record<string, string> = {
   draft: 'Strategy Maker (Drafts)',
   research_pending: 'Research Content',
   script_review_pending: 'Reel Script Review',
+  prompt_review_pending: 'Prompt Review',
+  creative_review_pending: 'Media Review',
   content_review_pending: 'Content Review',
-  prompt_review_pending: 'Prompt & Creative Review',
-  video_review_pending: 'Prompt & Creative Review', // Grouped together
-  failed: '\u26a0 Failed',
+  failed: '⚠ Failed',
 };
 
 interface PendingPost {
@@ -54,6 +54,9 @@ interface PendingPost {
     market_trends?: string;
     key_takeaways?: string;
   };
+  video_prompts?: any[];
+  image_requirements?: string;
+  media_url?: string;
 }
 
 interface PostEditValues {
@@ -190,16 +193,17 @@ export default function ApprovalHubPage() {
       case 'script_review': return 'script';
       case 'content_review': return 'content';
       case 'prompt_review': return 'prompts';
-      case 'video_review': return 'video';
+      case 'creative_review': return 'creative';
+      case 'video_review': return 'content';
       case 'draft': return 'drafts';
       default: return type;
     }
   };
 
   const approveItem = useMutation({
-    mutationFn: ({ type, id }: { type: keyof typeof activeTabPosts; id: string }) => {
+    mutationFn: ({ type, id, action }: { type: keyof typeof activeTabPosts; id: string; action?: string }) => {
       const stage = getEndpointStage(type);
-      return api.post(`/api/v1/pipeline/${stage}/${id}/approve`);
+      return api.post(`/api/v1/pipeline/${stage}/${id}/approve`, action ? { action } : undefined);
     },
     onSuccess: () => {
       toast.success('Approved! Next step triggered automatically.');
@@ -207,6 +211,16 @@ export default function ApprovalHubPage() {
       queryClient.invalidateQueries({ queryKey: ['pipeline-status'] });
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || 'Approval failed'),
+  });
+
+  const publishItem = useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/posts/${id}/publish`),
+    onSuccess: (res) => {
+      toast.success(res.data?.message || 'Published successfully!');
+      queryClient.invalidateQueries({ queryKey: ['pipeline-pending'] });
+      queryClient.invalidateQueries({ queryKey: ['pipeline-status'] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || 'Publishing failed'),
   });
 
   const rejectItem = useMutation({
@@ -269,19 +283,21 @@ export default function ApprovalHubPage() {
       draft: [],
       research_pending: [],
       script_review_pending: [],
-      content_review_pending: [],
       prompt_review_pending: [],
+      creative_review_pending: [],
+      content_review_pending: [],
       failed: [],
     };
 
     posts.forEach(p => {
       if (p.status === 'failed') groups.failed.push(p);
       else if (p.status === 'draft') groups.draft.push(p);
-      else if (p.status === 'research_pending') groups.research_pending.push(p);
+      else if (p.status === 'research_pending' || p.status === 'research_approved') groups.research_pending.push(p);
       else if (p.status === 'script_review_pending') groups.script_review_pending.push(p);
-      else if (p.status === 'research_approved' || p.status === 'script_approved' || p.status === 'content_review_pending') groups.content_review_pending.push(p);
-      else if (p.status === 'content_approved' || p.status === 'prompt_review_pending' || p.status === 'video_review_pending' || p.status === 'prompt_approved') {
-        groups.prompt_review_pending.push(p);
+      else if (p.status === 'script_approved' || p.status === 'prompt_review_pending') groups.prompt_review_pending.push(p);
+      else if (p.status === 'prompt_approved' || p.status === 'creative_review_pending') groups.creative_review_pending.push(p);
+      else if (p.status === 'creative_approved' || p.status === 'content_review_pending' || p.status === 'content_approved' || p.status === 'video_review_pending') {
+        groups.content_review_pending.push(p);
       }
     });
 
@@ -291,8 +307,9 @@ export default function ApprovalHubPage() {
   const getApproveType = (status: string) => {
     if (status === 'research_pending' || status === 'research_approved') return 'research_review';
     if (status === 'script_review_pending') return 'script_review';
-    if (status === 'content_review_pending' || status === 'content_approved') return 'content_review';
     if (status === 'prompt_review_pending' || status === 'prompt_approved') return 'prompt_review';
+    if (status === 'creative_review_pending' || status === 'creative_approved') return 'creative_review';
+    if (status === 'content_review_pending' || status === 'content_approved') return 'content_review';
     if (status === 'video_review_pending') return 'video_review';
     return status;
   };
@@ -301,8 +318,9 @@ export default function ApprovalHubPage() {
     if (status === 'draft') return 'drafts';
     if (status === 'research_pending') return 'research';
     if (status === 'script_review_pending') return 'script';
-    if (status === 'research_approved' || status === 'script_approved' || status === 'content_review_pending') return 'content';
-    if (status === 'content_approved' || status === 'prompt_review_pending' || status === 'video_review_pending' || status === 'prompt_approved') return 'prompts';
+    if (status === 'research_approved' || status === 'script_approved' || status === 'prompt_review_pending') return 'prompts';
+    if (status === 'prompt_approved' || status === 'creative_review_pending') return 'creative';
+    if (status === 'creative_approved' || status === 'content_review_pending' || status === 'video_review_pending' || status === 'content_approved') return 'content';
     return 'none';
   };
 
@@ -332,8 +350,9 @@ export default function ApprovalHubPage() {
           {item.status === 'draft' ? 'Draft Phase' :
            (item.status === 'research_pending' && !item.brief?.research_data) ? 'Processing...' :
            item.status === 'research_pending' ? 'Research Review' :
-           item.status === 'content_review_pending' ? 'Content Review' :
            item.status === 'prompt_review_pending' ? 'Prompt Review' :
+           item.status === 'creative_review_pending' ? 'Media Review' :
+           item.status === 'content_review_pending' ? 'Content Review' :
            item.status === 'video_review_pending' ? 'Video Review' :
            item.status?.endsWith('_approved') ? 'Processing...' :
            item.status?.replace(/_/g, ' ')}
@@ -348,7 +367,7 @@ export default function ApprovalHubPage() {
       {/* Expanded content */}
       {expandedId === item.id && (
         <div className="border-t border-slate-100 px-5 py-4 space-y-4">
-          {(item.linkedin_caption || isEditing) && (
+          {(item.linkedin_caption || isEditing) && ['content_review_pending', 'content_approved', 'scheduled', 'published'].includes(item.status || '') && (
             <div>
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">LinkedIn Caption</p>
               {isEditing ? (
@@ -365,7 +384,7 @@ export default function ApprovalHubPage() {
               )}
             </div>
           )}
-          {(item.instagram_caption || isEditing) && (
+          {(item.instagram_caption || isEditing) && ['content_review_pending', 'content_approved', 'scheduled', 'published'].includes(item.status || '') && (
             <div>
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Instagram Caption</p>
               {isEditing ? (
@@ -382,7 +401,7 @@ export default function ApprovalHubPage() {
               )}
             </div>
           )}
-          {(item.hook || isEditing) && (
+          {(item.hook || isEditing) && ['content_review_pending', 'content_approved', 'scheduled', 'published'].includes(item.status || '') && (
             <div>
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Hook / Opening Line</p>
               {isEditing ? (
@@ -399,7 +418,7 @@ export default function ApprovalHubPage() {
               )}
             </div>
           )}
-          {item.hashtags?.length > 0 && (
+          {item.hashtags?.length > 0 && ['content_review_pending', 'content_approved', 'scheduled', 'published'].includes(item.status || '') && (
             <div className="flex flex-wrap gap-1.5">
               {item.hashtags.map((h, i) => (
                 <span key={i} className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded-lg font-medium">
@@ -523,6 +542,61 @@ export default function ApprovalHubPage() {
             </div>
           )}
 
+          {/* Video Prompts Display (prompt_review_pending) */}
+          {['prompt_review_pending', 'creative_review_pending', 'video_review_pending', 'prompt_approved'].includes(item.status || '') && item.video_prompts && item.video_prompts.length > 0 && (
+            <div className="space-y-4 pt-4 border-t border-slate-100">
+              <div className="flex items-center gap-2 mb-2">
+                <Video className="h-4 w-4 text-rose-500" />
+                <p className="text-xs font-bold text-rose-600 uppercase tracking-wider">Video Generation Prompts</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {item.video_prompts.map((scene: any, index: number) => (
+                  <div key={index} className="bg-rose-50/50 border border-rose-100 rounded-xl p-4 flex flex-col h-full">
+                    <p className="text-[10px] font-bold text-rose-500 uppercase tracking-wider mb-2">Scene {scene.scene_num || index + 1}</p>
+                    <div className="flex-1 space-y-3">
+                      <div>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Visual Prompt</p>
+                        <p className="text-sm text-slate-700 leading-relaxed">{scene.prompt || scene.image_prompt || scene.visual_prompt}</p>
+                      </div>
+                      {(scene.audio || scene.narration || scene.voiceover) && (
+                        <div className="pt-2 border-t border-rose-100/50">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Audio / Narration</p>
+                          <p className="text-sm text-slate-600 italic">"{scene.audio || scene.narration || scene.voiceover}"</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Image Prompts Display for Static Posts */}
+          {['prompt_review_pending', 'creative_review_pending', 'content_review_pending', 'content_approved', 'scheduled', 'published'].includes(item.status || '') && item.image_requirements && (
+            <div className="space-y-4 pt-4 border-t border-slate-100">
+              <div className="flex items-center gap-2 mb-2">
+                <Image className="h-4 w-4 text-purple-500" />
+                <p className="text-xs font-bold text-purple-600 uppercase tracking-wider">Image Generation Prompt</p>
+              </div>
+              <div className="bg-purple-50/50 border border-purple-100 rounded-xl p-4">
+                <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{item.image_requirements}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Generated Media Display */}
+          {item.media_url && (
+            <div className="space-y-4 pt-4 border-t border-slate-100">
+              <div className="flex items-center gap-2 mb-2">
+                <Image className="h-4 w-4 text-fuchsia-500" />
+                <p className="text-xs font-bold text-fuchsia-600 uppercase tracking-wider">Generated Media</p>
+              </div>
+              <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden max-w-sm">
+                <img src={item.media_url} alt="Generated media" className="w-full h-auto" />
+              </div>
+            </div>
+          )}
+
           {/* Error badge for failed posts */}
           {item.status === 'failed' && (
             <div className="flex items-start gap-2.5 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
@@ -584,17 +658,38 @@ export default function ApprovalHubPage() {
                 </button>
               ) : (
                 <>
-                  <button
-                    onClick={() => approveItem.mutate({ type: getApproveType(item.status), id: item.id })}
-                    disabled={isApprovingThis}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors"
-                  >
-                    {isApprovingThis ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                    {item.status === 'research_pending' ? 'Approve (Generate Content)' :
-                     item.status === 'content_review_pending' ? 'Approve (Generate Prompt)' :
-                     item.status === 'prompt_review_pending' ? 'Approve (Generate Video)' :
-                     item.status === 'video_review_pending' ? 'Approve (Schedule)' : 'Approve'}
-                  </button>
+                  {item.status === 'content_review_pending' || item.status === 'video_review_pending' ? (
+                    <>
+                      <button
+                        onClick={() => approveItem.mutate({ type: getApproveType(item.status), id: item.id, action: 'schedule' })}
+                        disabled={isApprovingThis}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors"
+                      >
+                         {isApprovingThis ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                         Schedule
+                      </button>
+                      <button
+                        onClick={() => publishItem.mutate(item.id)}
+                        disabled={publishItem.isPending}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors"
+                      >
+                         {publishItem.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                         Publish Now
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => approveItem.mutate({ type: getApproveType(item.status), id: item.id })}
+                      disabled={isApprovingThis}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors"
+                    >
+                       {isApprovingThis ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                       {item.status === 'research_pending' ? 'Approve (Generate Script/Prompt)' :
+                        item.status === 'script_review_pending' ? 'Approve (Generate Prompt)' :
+                        item.status === 'prompt_review_pending' ? 'Approve (Generate Media)' :
+                        item.status === 'creative_review_pending' ? 'Approve (Generate Content)' : 'Approve'}
+                    </button>
+                  )}
                   <button
                     onClick={() => startEdit(item)}
                     className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-semibold transition-colors"
@@ -718,7 +813,8 @@ export default function ApprovalHubPage() {
                   onClick={() => {
                     if (activeStage === 'draft') startAllResearch.mutate();
                     else if (activeStage === 'research_pending') startAllContent.mutate();
-                    else if (activeStage === 'content_review_pending') startAllPrompts.mutate();
+                    else if (activeStage === 'script_review_pending') startAllPrompts.mutate();
+                    else if (activeStage === 'prompt_review_pending') startAllContent.mutate();
                   }}
                   disabled={startAllResearch.isPending || startAllContent.isPending || startAllPrompts.isPending}
                   className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 flex items-center gap-2 transition-colors ml-auto"
@@ -730,7 +826,8 @@ export default function ApprovalHubPage() {
                   )}
                   {activeStage === 'draft' ? 'Approve All Drafts' : 
                    activeStage === 'research_pending' ? 'Approve All Research' : 
-                   activeStage === 'content_review_pending' ? 'Approve All Content' : 'Approve All'}
+                   activeStage === 'script_review_pending' ? 'Approve All Scripts' : 
+                   activeStage === 'prompt_review_pending' ? 'Approve All Prompts' : 'Approve All'}
                 </button>
                 <button
                   onClick={() => {
@@ -787,7 +884,15 @@ export default function ApprovalHubPage() {
 
         {/* Stage Tabs (Nested) */}
         <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-4">
-        {Object.entries(STAGE_LABELS).map(([stageKey, label]) => {
+        {Object.entries(STAGE_LABELS)
+          .filter(([key]) => {
+            if (activeTab !== 'instagram_reels') {
+              // Hide Reel-specific tabs for LinkedIn and Instagram Posts
+              return key !== 'script_review_pending';
+            }
+            return true;
+          })
+          .map(([stageKey, label]) => {
             const count = activeTabPosts[stageKey as keyof typeof activeTabPosts]?.length || 0;
             const isFailed = stageKey === 'failed';
             return (

@@ -281,7 +281,8 @@ async def _publish_post(user_id: str, post, platform: str, caption: str, db, sta
         else:
             svc = InstagramService(access_token, account.platform_user_id)
 
-        result = await svc.publish_post(caption, post.image_url)
+        image_to_publish = post.image_url or post.media_url
+        result = await svc.publish_post(caption, image_to_publish)
         gen_ms = int((time.time() - start) * 1000)
 
         post.status = "published"

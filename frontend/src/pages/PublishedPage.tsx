@@ -177,9 +177,9 @@ export default function PublishedPage() {
                             {caption || 'No caption provided'}
                           </p>
 
-                          {post.image_url && (
+                          {(post.image_url || post.media_url) && (
                             <div className="rounded-xl overflow-hidden mb-3 border border-slate-100 max-h-48 bg-slate-50">
-                              <img src={post.image_url} alt="Scheduled post" className="w-full h-auto object-cover" />
+                              <img src={post.image_url || post.media_url} alt="Scheduled media" className="w-full h-auto object-cover" />
                             </div>
                           )}
                         </div>
@@ -260,9 +260,9 @@ export default function PublishedPage() {
                             {caption || 'No caption provided'}
                           </p>
 
-                          {post.image_url && (
+                          {(post.image_url || post.media_url) && (
                             <div className="rounded-xl overflow-hidden mb-3 border border-slate-100 max-h-48 bg-slate-50">
-                              <img src={post.image_url} alt="Published post" className="w-full h-auto object-cover" />
+                              <img src={post.image_url || post.media_url} alt="Published media" className="w-full h-auto object-cover" />
                             </div>
                           )}
                         </div>

@@ -37,6 +37,8 @@ class PostStatusEnum(str, enum.Enum):
     content_approved = "content_approved"
     prompt_review_pending = "prompt_review_pending"
     prompt_approved = "prompt_approved"
+    creative_review_pending = "creative_review_pending"
+    creative_approved = "creative_approved"
     video_generation_pending = "video_generation_pending"
     video_review_pending = "video_review_pending"
     video_approved = "video_approved"
@@ -217,6 +219,7 @@ class GeneratedPost(Base):
     cta = Column(Text, nullable=True)
     image_requirements = Column(Text, nullable=True)
     image_url = Column(String, nullable=True)
+    media_url = Column(String, nullable=True)
     image_review_result = Column(String, default="PENDING")
     image_review_notes = Column(Text, nullable=True)
     image_retry_count = Column(Integer, default=0)

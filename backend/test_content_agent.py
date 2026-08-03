@@ -110,26 +110,7 @@ Target Audience: {target_audience}
 Create a detailed image generation prompt. Return ONLY valid JSON:
 {{
     "image_requirements": "Detailed AI image generation prompt for a professional branded creative. Include: background style, color palette (brand colors), typography/text to display (if any), and visual concept. Optimized for 1080x1080."
-}}
-
-=== MANDATORY BRANDING REQUIREMENT ===
-You MUST include the following logo requirement word-for-word at the end of the `image_requirements` prompt you generate:
-
-"Place the official Elan Exports Consultancy logo in the top-right corner (or bottom-right if it fits the composition better). Do NOT redesign, reinterpret, simplify, modernize, or restyle the logo. Reproduce it faithfully as a premium vector logo.
-Logo specifications:
-• White background badge.
-• Navy blue typography reading 'ÉLAN' at the top and 'EXPORTS CONSULTANCY' in a curved layout.
-• Central navy-blue cargo ship with a small green flag.
-• Metallic gold ship steering wheel behind the ship.
-• Blue ocean wave beneath the ship.
-• Gold rope forming a semicircle around the lower portion.
-• Gold anchor centered below the ship.
-• Gold text: 'ESTD' on the left and '2005' on the right.
-• Bottom tagline: 'BEYOND BORDERS, BEYOND LIMITS' in navy blue with elegant gold decorative flourishes.
-• Preserve the exact blue (#153E90) and metallic gold (#C9A227) color scheme.
-• Maintain sharp vector edges, balanced spacing, correct proportions, and premium corporate branding.
-• The logo must appear clean, high-resolution, and identical to the official branding without any added effects, distortions, AI artifacts, or typography changes."
-"""
+}}"""
 
 # --- Static Caption Prompt ---
 STATIC_CAPTION_PROMPT = """You are an expert social media copywriter for {company_name}.

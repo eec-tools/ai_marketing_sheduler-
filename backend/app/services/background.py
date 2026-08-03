@@ -7,6 +7,8 @@ from app.models.models import GeneratedPost, PostStatusEnum, ContentBrief, Month
 from app.services.ai.agents.pipeline import (
     run_research_pipeline,
     run_content_pipeline,
+    run_prompt_pipeline,
+    run_media_pipeline,
     run_video_prompt_pipeline,
     run_full_strategy_pipeline,
     run_reel_script_pipeline,
@@ -133,19 +135,7 @@ async def process_all_video_prompt_background(user_id: str, brand_context: dict)
             await _mark_failed(post_id, e)
 
 
-async def background_run_content_pipeline(post_id: str, brand_context: dict):
-    """Run content generation for a single post."""
-    try:
-        async with AsyncSessionLocal() as db:
-            post = await db.get(GeneratedPost, post_id)
-            if post and post.status == PostStatusEnum.research_approved:
-                result = await db.execute(select(ContentBrief).where(ContentBrief.post_id == post.id))
-                brief = result.scalar_one_or_none()
-                if brief:
-                    await run_content_pipeline(db, post, brief, brand_context)
-    except Exception as e:
-        logger.error(f"Background content generation failed for {post_id}: {e}")
-        await _mark_failed(post_id, e)
+
 
 
 async def background_run_research_pipeline(post_id: str, brand_context: dict):
@@ -165,8 +155,46 @@ async def background_run_video_prompt_pipeline(post_id: str, brand_context: dict
     try:
         async with AsyncSessionLocal() as db:
             post = await db.get(GeneratedPost, post_id)
-            if post and post.status == PostStatusEnum.content_approved:
+            if post and post.status == PostStatusEnum.script_approved:
                 await run_video_prompt_pipeline(db, post, brand_context)
     except Exception as e:
         logger.error(f"Background video prompt generation failed for {post_id}: {e}")
+        await _mark_failed(post_id, e)
+
+async def background_run_prompt_pipeline(post_id: str, brand_context: dict):
+    try:
+        async with AsyncSessionLocal() as db:
+            post = await db.get(GeneratedPost, post_id)
+            if post and post.status in [PostStatusEnum.research_approved, PostStatusEnum.script_approved]:
+                from sqlalchemy import select
+                result = await db.execute(select(ContentBrief).where(ContentBrief.post_id == post.id))
+                brief = result.scalar_one_or_none()
+                if brief:
+                    await run_prompt_pipeline(db, post, brief, brand_context)
+    except Exception as e:
+        logger.error(f"Background prompt generation failed for {post_id}: {e}")
+        await _mark_failed(post_id, e)
+
+async def background_run_media_pipeline(post_id: str):
+    try:
+        async with AsyncSessionLocal() as db:
+            post = await db.get(GeneratedPost, post_id)
+            if post and post.status == PostStatusEnum.prompt_approved:
+                await run_media_pipeline(db, post)
+    except Exception as e:
+        logger.error(f"Background media generation failed for {post_id}: {e}")
+        await _mark_failed(post_id, e)
+
+async def background_run_content_pipeline(post_id: str, brand_context: dict):
+    try:
+        async with AsyncSessionLocal() as db:
+            post = await db.get(GeneratedPost, post_id)
+            if post and post.status == PostStatusEnum.creative_approved:
+                from sqlalchemy import select
+                result = await db.execute(select(ContentBrief).where(ContentBrief.post_id == post.id))
+                brief = result.scalar_one_or_none()
+                if brief:
+                    await run_content_pipeline(db, post, brief, brand_context)
+    except Exception as e:
+        logger.error(f"Background content generation failed for {post_id}: {e}")
         await _mark_failed(post_id, e)

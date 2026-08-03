@@ -32,10 +32,7 @@ from app.services.ai.agents.audit_agent import run_brand_audit
 from app.services.ai.agents.strategy_agent import generate_monthly_strategy
 from app.services.ai.agents.research_agent import research_topic
 from app.services.ai.agents.review_agent import review_research, review_content, review_video_prompts, MAX_RETRIES
-from app.services.ai.agents.content_agent import (
-    generate_reel_content, generate_static_content,
-    generate_reel_script, generate_reel_content_from_script
-)
+from app.services.ai.agents.content_agent import generate_reel_script
 from app.services.ai.agents.video_agent import generate_video_prompts
 
 logger = logging.getLogger(__name__)
@@ -299,19 +296,14 @@ async def run_reel_script_pipeline(
 # Step 4 + 5: Content Creation + AI Review Loop
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def run_content_pipeline(
+
+async def run_prompt_pipeline(
     db: AsyncSession,
     post: GeneratedPost,
     brief: ContentBrief,
     brand_context: dict,
     max_retries: int = QUALITY_MAX_RETRIES
 ) -> GeneratedPost:
-    """
-    Runs Step 4 (Content Creation) + Step 5.1 (AI Review) in a quality loop.
-    - Rate limit 429 errors: automatically retried forever via _groq_call_with_retry.
-    - AI Review FAIL: regenerates content up to max_retries times.
-    - If quality loop exhausted: post reverts to research_pending.
-    """
     topic_data = {}
     if post.image_requirements:
         try:
@@ -320,69 +312,78 @@ async def run_content_pipeline(
             topic_data = {}
 
     content_type = topic_data.get("content_type", "static")
-    is_reel = content_type == "reel"
+    is_reel = content_type == "reel" or topic_data.get("format") == "instagram_reels"
 
-    for attempt in range(1, max_retries + 1):
-        logger.info(f"Content quality attempt {attempt}/{max_retries} for post {post.id} (type: {content_type})")
+    user_res = await db.execute(select(User).where(User.id == post.user_id))
+    user = user_res.scalar_one_or_none()
+    provider = user.preferred_ai_provider if user else "groq"
 
-        user_res = await db.execute(select(User).where(User.id == post.user_id))
-        user = user_res.scalar_one_or_none()
-        provider = user.preferred_ai_provider if user else "groq"
+    from app.services.ai.agents.content_agent import generate_reel_prompt_from_script, generate_static_prompt
 
-        # Step 4: Generate content — infinite retry on rate limits
-        if is_reel:
-            # If we have an approved script (hook_1 present), use caption-from-script flow
-            has_approved_script = bool(topic_data.get("spoken_script"))
-            if has_approved_script:
-                await _llm_call_with_retry(
-                    db, post.user_id, provider,
-                    lambda key: generate_reel_content_from_script(db, post, brief, topic_data, brand_context, key, provider),
-                    label=f"ReelCaptionFromScript[{post.id[:8]}]"
-                )
-            else:
-                # Legacy fallback: generate full reel content without pre-approved script
-                await _llm_call_with_retry(
-                    db, post.user_id, provider,
-                    lambda key: generate_reel_content(db, post, brief, topic_data, brand_context, key, provider),
-                    label=f"ReelContent[{post.id[:8]}]"
-                )
-        else:
-            await _llm_call_with_retry(
-                db, post.user_id, provider,
-                lambda key: generate_static_content(db, post, brief, topic_data, brand_context, key, provider),
-                label=f"StaticContent[{post.id[:8]}]"
-            )
-
-        # Step 5.1: AI Content Review — infinite retry on rate limits
-        review = await _llm_call_with_retry(
+    if is_reel:
+        await _llm_call_with_retry(
             db, post.user_id, provider,
-            lambda key: review_content(
-                headline=post.headline or "",
-                linkedin_caption=post.linkedin_caption or "",
-                instagram_caption=post.instagram_caption or "",
-                hashtags=post.hashtags or [],
-                cta=post.cta or "",
-                platform=str(post.platform.value if post.platform else "linkedin"),
-                research_data=brief.research_data or "",
-                api_key=key,
-                provider=provider
-            ),
-            label=f"ContentReview[{post.id[:8]}]"
+            lambda key: generate_reel_prompt_from_script(db, post, topic_data, brand_context, key, provider),
+            label=f"ReelPrompt[{post.id[:8]}]"
         )
-
-        if review.get("verdict") == "PASS":
-            post.status = PostStatusEnum.content_review_pending  # Ready for human review
-            await db.commit()
-            logger.info(f"Content PASSED for post {post.id} (score: {review.get('score')})")
-            return post
-        else:
-            logger.warning(f"Content quality FAILED (attempt {attempt}): {review.get('feedback', '')[:100]}")
-
-    # Quality loop exhausted — revert to research_pending so user can retry
-    post.status = PostStatusEnum.research_pending
-    await db.commit()
-    logger.error(f"Content exhausted {max_retries} quality retries for post {post.id}. Reverting to research_pending.")
+    else:
+        await _llm_call_with_retry(
+            db, post.user_id, provider,
+            lambda key: generate_static_prompt(db, post, brief, topic_data, brand_context, key, provider),
+            label=f"StaticPrompt[{post.id[:8]}]"
+        )
     return post
+
+async def run_media_pipeline(
+    db: AsyncSession,
+    post: GeneratedPost,
+    max_retries: int = 3
+) -> GeneratedPost:
+    from app.services.ai.agents.media_agent import generate_media
+    success = await generate_media(db, post)
+    if not success:
+        post.status = PostStatusEnum.failed
+        await db.commit()
+    return post
+
+async def run_content_pipeline(
+    db: AsyncSession,
+    post: GeneratedPost,
+    brief: ContentBrief,
+    brand_context: dict,
+    max_retries: int = QUALITY_MAX_RETRIES
+) -> GeneratedPost:
+    topic_data = {}
+    if post.image_requirements:
+        try:
+            topic_data = json.loads(post.image_requirements)
+        except json.JSONDecodeError:
+            topic_data = {}
+
+    content_type = topic_data.get("content_type", "static")
+    is_reel = content_type == "reel" or topic_data.get("format") == "instagram_reels"
+
+    user_res = await db.execute(select(User).where(User.id == post.user_id))
+    user = user_res.scalar_one_or_none()
+    provider = user.preferred_ai_provider if user else "groq"
+
+    from app.services.ai.agents.content_agent import generate_reel_caption, generate_static_caption
+
+    if is_reel:
+        await _llm_call_with_retry(
+            db, post.user_id, provider,
+            lambda key: generate_reel_caption(db, post, brief, topic_data, brand_context, key, provider),
+            label=f"ReelCaption[{post.id[:8]}]"
+        )
+    else:
+        await _llm_call_with_retry(
+            db, post.user_id, provider,
+            lambda key: generate_static_caption(db, post, brief, topic_data, brand_context, key, provider),
+            label=f"StaticCaption[{post.id[:8]}]"
+        )
+    return post
+
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -402,19 +402,19 @@ async def publish_post(
                     svc = LinkedInService(access_token, urn)
                 else:
                     svc = InstagramService(access_token, account.platform_user_id)
-                result_data = await svc.publish_post(caption, post.image_url)
+                image_to_publish = post.image_url or post.media_url
+                result_data = await svc.publish_post(caption, image_to_publish)
                 platform_post_id = result_data.get("platform_post_id", platform_post_id)
             except Exception as e:
                 logger.error(f"[Posts] Live publishing to {plat_str} failed. Reason: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to publish to {plat_str.capitalize()}: {str(e)}")
         else:
-            logger.warning(f"[Posts] No connected account found for {plat_str}, falling back to simulated mode.")
-            is_simulated = True
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Please connect your {plat_str.capitalize()} account first in the Integrations page before publishing."
+            )
 
-        if is_simulated:
-            simulated_platforms.append(plat_str.capitalize())
-        else:
-            success_platforms.append(plat_str.capitalize())
+        success_platforms.append(plat_str.capitalize())
 
         gen_ms = int((time.time() - start) * 1000)
         history = PublishingHistory(
@@ -427,7 +427,7 @@ async def publish_post(
             status="published",
             generation_time_ms=gen_ms,
             caption_preview=caption[:200] if caption else None,
-            image_url=post.image_url,
+            image_url=post.image_url or post.media_url,
         )
         db.add(history)
 

@@ -25,7 +25,7 @@ from sqlalchemy.orm import selectinload
 from app.api.v1.deps import get_current_user, get_db
 from app.models.models import (
     GeneratedPost, ContentBrief, VideoPrompt, MonthlyStrategy,
-    BrandProfile, PostStatusEnum, User
+    BrandProfile, PostStatusEnum, User, ConnectedAccount
 )
 from app.services.ai.agents.pipeline import (
     run_full_strategy_pipeline,
@@ -47,6 +47,9 @@ _key_rotator = KeyRotator()
 class StrategyRequest(BaseModel):
     month: str  # e.g. "2025-08"
     target_format: str  # e.g. "instagram_reels", "instagram_posts", "linkedin"
+
+class ContentApproveRequest(BaseModel):
+    action: str = "schedule"  # schedule or publish
 
 class RejectRequest(BaseModel):
     feedback: str = ""
@@ -171,7 +174,7 @@ async def get_pending_items(
     """Get all items across all review stages for the Approval Hub."""
     result = await db.execute(
         select(GeneratedPost)
-        .options(selectinload(GeneratedPost.brief))
+        .options(selectinload(GeneratedPost.brief), selectinload(GeneratedPost.video_prompt))
         .where(
             GeneratedPost.user_id == user.id,
             GeneratedPost.status.notin_([PostStatusEnum.published, PostStatusEnum.scheduled, PostStatusEnum.failed])
@@ -192,6 +195,10 @@ async def get_pending_items(
         # Safe access: brief is a backref list, not a scalar
         _brief = p.brief[0] if getattr(p, "brief", None) and len(p.brief) > 0 else None
 
+        _video_prompt = None
+        if getattr(p, "video_prompt", None):
+            _video_prompt = p.video_prompt[0] if isinstance(p.video_prompt, list) else p.video_prompt
+
         return {
             "id": p.id,
             "headline": p.headline,
@@ -204,6 +211,7 @@ async def get_pending_items(
             "hook": getattr(p, "hook", None),
             "hashtags": getattr(p, "hashtags", []),
             "cta": p.cta,
+            "media_url": getattr(p, "media_url", None) or getattr(p, "image_url", None),
             "created_at": str(p.created_at),
             # Reel script fields (populated after script generation)
             "hook_1": reqs_data.get("hook_1"),
@@ -212,6 +220,7 @@ async def get_pending_items(
             "spoken_script": reqs_data.get("spoken_script"),
             "text_overlays": reqs_data.get("text_overlays", []),
             "estimated_duration": reqs_data.get("estimated_duration_seconds"),
+            "image_requirements": reqs_data.get("generated_prompt"),
             "brief": {
                 "research_data": _brief.research_data,
                 "statistics": _brief.statistics or [],
@@ -219,6 +228,7 @@ async def get_pending_items(
                 "market_trends": _brief.market_trends,
                 "key_takeaways": _brief.key_takeaways,
             } if _brief else None,
+            "video_prompts": _video_prompt.scenes if _video_prompt and _video_prompt.scenes else [],
         }
 
     return [serialize_post(p) for p in posts]
@@ -409,7 +419,7 @@ async def approve_research(
     if post.image_requirements:
         try:
             reqs = json.loads(post.image_requirements)
-            is_reel = reqs.get("content_type") == "reel"
+            is_reel = reqs.get("content_type") == "reel" or reqs.get("format") == "instagram_reels"
         except Exception:
             pass
 
@@ -421,9 +431,9 @@ async def approve_research(
         background_tasks.add_task(background_run_script_pipeline, post_id, brand_context)
         return {"message": "Research approved. Reel script generation started.", "post_id": post_id}
     else:
-        from app.services.background import background_run_content_pipeline
-        background_tasks.add_task(background_run_content_pipeline, post_id, brand_context)
-        return {"message": "Research approved. Content generation started.", "post_id": post_id}
+        from app.services.background import background_run_prompt_pipeline
+        background_tasks.add_task(background_run_prompt_pipeline, post_id, brand_context)
+        return {"message": "Research approved. Prompt generation started.", "post_id": post_id}
 
 
 @router.post("/research/{post_id}/reject")
@@ -478,10 +488,10 @@ async def approve_script(
     post.status = PostStatusEnum.script_approved
     await db.commit()
 
-    from app.services.background import background_run_content_pipeline
-    background_tasks.add_task(background_run_content_pipeline, post_id, brand_context)
+    from app.services.background import background_run_video_prompt_pipeline
+    background_tasks.add_task(background_run_video_prompt_pipeline, post_id, brand_context)
 
-    return {"message": "Script approved. Caption generation started.", "post_id": post_id}
+    return {"message": "Script approved. Video prompt generation started.", "post_id": post_id}
 
 
 @router.post("/script/{post_id}/reject")
@@ -515,37 +525,55 @@ async def reject_script(
 @router.post("/content/{post_id}/approve")
 async def approve_content(
     post_id: str,
+    req: ContentApproveRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
-    """Human approves content → for reels, triggers video prompt gen. For static, marks as scheduled-ready."""
     post = await db.get(GeneratedPost, post_id)
     if not post or post.user_id != user.id:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    # Check if it's a reel
-    topic_data = {}
-    if post.image_requirements:
-        try:
-            topic_data = json.loads(post.image_requirements)
-        except json.JSONDecodeError:
-            pass
-
-    content_type = topic_data.get("content_type", topic_data.get("type", "static"))
-
-    if content_type == "reel":
-        brand_context = await _get_brand_context(db, user.id)
-        post.status = PostStatusEnum.content_approved
-        await db.commit()
-        # Trigger video prompt pipeline
-        from app.services.background import background_run_video_prompt_pipeline
-        background_tasks.add_task(background_run_video_prompt_pipeline, post_id, brand_context)
-        return {"message": "Content approved. Video prompt generation started.", "post_id": post_id}
+    # Ensure the user has connected the appropriate social account
+    platform_str = post.platform.value if hasattr(post.platform, 'value') else str(post.platform)
+    if platform_str == "both":
+        platform_str = "linkedin"  # Or check both, but checking at least one is good. Let's check both if 'both'
+        acc_result = await db.execute(
+            select(ConnectedAccount).where(
+                ConnectedAccount.user_id == user.id,
+                ConnectedAccount.status == "connected"
+            )
+        )
+        accounts = acc_result.scalars().all()
+        if not accounts:
+            raise HTTPException(
+                status_code=400, 
+                detail="Please connect your social accounts (LinkedIn/Instagram) in the Integrations page before scheduling."
+            )
     else:
-        post.status = PostStatusEnum.content_approved
-        await db.commit()
-        return {"message": "Content approved. Ready for scheduling.", "post_id": post_id}
+        acc_result = await db.execute(
+            select(ConnectedAccount).where(
+                ConnectedAccount.user_id == user.id,
+                ConnectedAccount.platform == platform_str,
+                ConnectedAccount.status == "connected"
+            )
+        )
+        account = acc_result.scalar_one_or_none()
+        if not account:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Please connect your {platform_str.capitalize()} account first in the Integrations page before scheduling."
+            )
+
+    if req.action == "publish":
+        post.status = PostStatusEnum.published
+    else:
+        post.status = PostStatusEnum.scheduled
+
+    await db.commit()
+    return {"message": f"Content {req.action}d successfully.", "post_id": post_id}
+
+
 
 
 @router.post("/content/{post_id}/reject")
@@ -577,23 +605,68 @@ async def reject_content(
     return {"message": "Content rejected. Regenerating.", "post_id": post_id}
 
 
-# ─── Video Prompt Approve/Reject ─────────────────────────────────────────────
+# ─── Creative Approve/Reject ─────────────────────────────────────────────
 
-@router.post("/prompts/{post_id}/approve")
-async def approve_prompts(
+@router.post("/creative/{post_id}/approve")
+async def approve_creative(
     post_id: str,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
-    """Human approves cinematic prompts → ready for Flow AI video generation."""
+    post = await db.get(GeneratedPost, post_id)
+    if not post or post.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    brand_context = await _get_brand_context(db, user.id)
+
+    post.status = PostStatusEnum.creative_approved
+    await db.commit()
+    from app.services.background import background_run_content_pipeline
+    background_tasks.add_task(background_run_content_pipeline, post_id, brand_context)
+
+    return {"message": "Creative approved. Content generation started.", "post_id": post_id}
+
+@router.post("/creative/{post_id}/reject")
+async def reject_creative(
+    post_id: str,
+    req: RejectRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
     post = await db.get(GeneratedPost, post_id)
     if not post or post.user_id != user.id:
         raise HTTPException(status_code=404, detail="Post not found")
 
     post.status = PostStatusEnum.prompt_approved
     await db.commit()
+    from app.services.background import background_run_media_pipeline
+    background_tasks.add_task(background_run_media_pipeline, post_id)
 
-    return {"message": "Video prompts approved. Ready for video generation.", "post_id": post_id}
+    return {"message": "Creative rejected. Regenerating media.", "post_id": post_id}
+
+# ─── Video Prompt Approve/Reject ─────────────────────────────────────────────
+
+@router.post("/prompts/{post_id}/approve")
+async def approve_prompts(
+    post_id: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    post = await db.get(GeneratedPost, post_id)
+    if not post or post.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Post not found")
+        
+    post.status = PostStatusEnum.prompt_approved
+    await db.commit()
+    
+    from app.services.background import background_run_media_pipeline
+    background_tasks.add_task(background_run_media_pipeline, post_id)
+    return {"message": "Prompt approved. Media generation started.", "post_id": post_id}
+
+
 
 
 @router.post("/prompts/{post_id}/reject")
@@ -604,28 +677,34 @@ async def reject_prompts(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user)
 ):
-    """Human rejects prompts → regenerate."""
     post = await db.get(GeneratedPost, post_id)
     if not post or post.user_id != user.id:
         raise HTTPException(status_code=404, detail="Post not found")
 
     brand_context = await _get_brand_context(db, user.id)
+    
+    is_reel = False
+    if post.image_requirements:
+        try:
+            reqs = json.loads(post.image_requirements)
+            is_reel = reqs.get("content_type") == "reel" or reqs.get("format") == "instagram_reels"
+        except Exception:
+            pass
 
-    # Delete old prompts
-    result = await db.execute(select(VideoPrompt).where(VideoPrompt.post_id == post_id).order_by(VideoPrompt.created_at.desc()))
-    old_prompt = result.scalars().first()
-    if old_prompt:
-        old_prompt.human_feedback = req.feedback
+    if is_reel:
+        post.status = PostStatusEnum.script_approved
         await db.commit()
-        await db.delete(old_prompt)
+        from app.services.background import background_run_prompt_pipeline
+        background_tasks.add_task(background_run_prompt_pipeline, post_id, brand_context)
+        return {"message": "Video prompt rejected. Regenerating.", "post_id": post_id}
+    else:
+        post.status = PostStatusEnum.research_approved
         await db.commit()
+        from app.services.background import background_run_prompt_pipeline
+        background_tasks.add_task(background_run_prompt_pipeline, post_id, brand_context)
+        return {"message": "Image prompt rejected. Regenerating.", "post_id": post_id}
 
-    post.status = PostStatusEnum.prompt_review_pending
-    await db.commit()
-    from app.services.background import background_run_video_prompt_pipeline
-    background_tasks.add_task(background_run_video_prompt_pipeline, post_id, brand_context)
 
-    return {"message": "Video prompts rejected. Regenerating.", "post_id": post_id}
 
 
 # ─── Bulk Research Trigger ────────────────────────────────────────────────────
