@@ -105,6 +105,7 @@ export interface GeneratedPost {
   cta?: string;
   image_requirements?: string;
   image_url?: string;
+  media_url?: string;
   image_review_result?: 'PASS' | 'FAIL' | 'PENDING' | 'PENDING_EXTENSION';
   image_review_notes?: string;
   image_retry_count: number;
